@@ -321,6 +321,27 @@ class PMCSearcher(PaperSource):
             if fields.get("IsTruncated") != "true" or not token:
                 return best_key
 
+    def open_access_text(self, paper_id: str) -> Optional[str]:
+        """Return the plain-text rendering of the article's newest open access version.
+
+        Args:
+            paper_id: PMCID (e.g., 'PMC1234567')
+
+        Returns:
+            The text, or None when the dataset holds no text for the article
+
+        Raises:
+            requests.RequestException: When the dataset cannot be reached
+        """
+        pmcid = self._normalize_pmcid(paper_id)
+        key = self._latest_oa_key(pmcid, "txt")
+        if not key:
+            return None
+        response = self.session.get(f"{self.OA_BUCKET_URL}/{key}", timeout=60)
+        response.raise_for_status()
+        text = response.content.decode("utf-8", errors="replace")
+        return text if text.strip() else None
+
     def download_pdf(self, paper_id: str, save_path: str) -> str:
         """
         Download PDF of a PMC open access article.
@@ -388,17 +409,12 @@ class PMCSearcher(PaperSource):
         try:
             # The dataset carries a plain-text rendering of each article, which needs no
             # PDF extraction; the PDF is the fallback for an article that lacks one
-            pmcid = self._normalize_pmcid(paper_id)
             try:
-                key = self._latest_oa_key(pmcid, "txt")
-                if key:
-                    response = self.session.get(f"{self.OA_BUCKET_URL}/{key}", timeout=60)
-                    response.raise_for_status()
-                    text = response.content.decode("utf-8", errors="replace")
-                    if text.strip():
-                        return text
+                text = self.open_access_text(paper_id)
+                if text:
+                    return text
             except requests.RequestException as e:
-                logger.warning(f"PMC open access text for {pmcid} unavailable, trying the PDF: {e}")
+                logger.warning(f"PMC open access text for {paper_id} unavailable, trying the PDF: {e}")
 
             # Download PDF first
             pdf_path = self.download_pdf(paper_id, save_path)
